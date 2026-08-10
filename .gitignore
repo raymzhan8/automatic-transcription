@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Local caches (IDTAP audio, vocalprep models, etc.)
+.cache/
+
+# Generated datasets and experiment outputs (~20+ GB)
+output/
+
+# Trajectory-classification generated artifacts
+trajectory-classification/outputs/*
+!trajectory-classification/outputs/.gitkeep
+trajectory-classification/data/
+
+# Model checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# Audio (generated clips — keep out of version control)
+*.wav
+*.mp3
+*.flac
+*.ogg
+
+# Spectrogram images generated for CNN training
+*.png
