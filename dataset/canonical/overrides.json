@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "description": "Hand-maintained performance groupings for cases the heuristics in dataset/canonical/performance_groups.py cannot settle. Each entry of `groups` unions the listed IDTAP transcription ids (the `_id` field) into a single performance group, on top of the automatic shared-audioID and (soloist, raga, title) rules. Ids that do not exist in the fetched transcription list are ignored with a warning, so a stale override never breaks a build. Every group must carry a human-readable `reason` stating the evidence, because these merges are not reproducible from the data alone.",
+  "fields": {
+    "recording_ids": "list of IDTAP transcription `_id` values to union (2 or more)",
+    "reason": "why these are one performance; cite durations, audio ids, or external knowledge",
+    "added_on": "ISO date the override was added",
+    "confidence": "one of high | medium | low, the annotator's own assessment"
+  },
+  "groups": [
+    {
+      "recording_ids": [
+        "6503e36cd9ff49d3988d0b40",
+        "65b14e207f607fb149202019",
+        "65b2ab707f607fb14920201a"
+      ],
+      "reason": "D.V. Paluskar, Bhopali/Bhup, under three different audioIDs (64fedda02f5f4d9c1b63648c, 65b149747f607fb149202017, 65b14c577f607fb149202018) so the shared-audio rule cannot see them, and three different titles ('D.V. Paluskar - Bhopali', '... Bhopali Vilambit', '... Bhopali, Jab Se Tumi Sab Laagali') so the title rule cannot either. Durations give it away: 1119.5 s + 575.2 s = 1694.7 s against the single 1691.1 s transcription, a 3.6 s difference. Almost certainly one performance uploaded once whole and once split into vilambit and bandish halves. Grouped deliberately: if the guess is wrong we lose a little split granularity, if it is right and we do not group we leak the same audio across train and test.",
+      "added_on": "2026-08-13",
+      "confidence": "medium"
+    }
+  ]
+}

@@ -29,12 +29,12 @@ Thumbs.db
 .cache/
 
 # Generated datasets and experiment outputs (~20+ GB)
+# Includes cnn_dataset*/, denoised/, cnn_runs/, ab_denoise_runs/,
+# silence_detection/, inventory/ — all regenerable from IDTAP.
 output/
 
-# Trajectory-classification generated artifacts
-trajectory-classification/outputs/*
-!trajectory-classification/outputs/.gitkeep
-trajectory-classification/data/
+# Legacy build_dataset.py working directory
+data/
 
 # Model checkpoints
 *.pt

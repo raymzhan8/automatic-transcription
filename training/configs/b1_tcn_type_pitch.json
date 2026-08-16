@@ -1,0 +1,21 @@
+{
+  "experiment": "b1_tcn_type_pitch",
+  "task": "type_and_pitch",
+  "architecture": "tcn",
+  "embed_channels": 128,
+  "tcn_dilations": [1, 2, 4, 8],
+  "optimizer": "adamw",
+  "lr": 0.001,
+  "weight_decay": 0.0001,
+  "grad_clip": 1.0,
+  "batch_size": 8,
+  "epochs": 50,
+  "patience": 10,
+  "seed": 42,
+  "pitch_weight": 1.0,
+  "lambda_type": 1.0,
+  "lambda_pitch": 1.0,
+  "excerpts_per_epoch": 512,
+  "num_workers": 0,
+  "manifest_name": "grouped_kfold_k5_seed42.json"
+}
