@@ -149,7 +149,7 @@ Clips shorter than one second are zero-padded; longer ones are truncated. Both t
 
 ---
 
-## Canonical / framewise pipeline (Steps 1–14)
+## Canonical / framewise pipeline (Steps 1–16)
 
 This is the active research track: build a continuous, lossless canonical representation of each transcription, then train framewise models on it. Step numbers here match `docs/step_N_*.md` exactly, so a doc's own title always agrees with the section that links it (`docs/step_4_5_canonical_trajectory_target.md` is linked from Steps 3 and 4, `docs/step_12_5_fusion_viterbi.md` from Step 12.5, and so on). The earlier, still-runnable CNN spectrogram-classification pipeline is described afterward, in its own unnumbered section.
 
@@ -482,6 +482,36 @@ python training/visualize_relative_pitch_ablation.py
 ```
 
 See [`docs/step_14_relative_pitch_trajectory.md`](docs/step_14_relative_pitch_trajectory.md) — outcome `RELATIVE_PITCH_ONLY_COMPETITIVE` (estimated pitch alone beats both audio-only and naive audio+pitch fusion), decision `IMPROVE_RELATIVE_PITCH_ESTIMATION`.
+
+### Step 15 — Learned pitch-motion representation
+
+Pitch/salience-evidence-only experiment: is trajectory information lost at the decoded-pitch-path stage, at the four-fixed-offset `φ` stage, or is the underlying acoustic pitch/salience estimate itself the bottleneck? Four conditions — fixed φ (P0, reproduces Step 14 B), a learned dense-delta pitch-motion encoder (P1), a learned register-invariant salience-motion encoder (P2), and an oracle-pitch version of P1 (P3). No audio branch, no fusion, no register decoding, no class weighting. Writes under `output/pitch_motion_ablation/` and [`docs/step_15_learned_pitch_motion.md`](docs/step_15_learned_pitch_motion.md).
+
+```bash
+python training/pitch_diagnostics/relative_pitch/dense_relative_salience.py
+python training/train_pitch_motion_ablation.py --condition P0 --all-folds --max-epochs 50 --patience 10
+python training/train_pitch_motion_ablation.py --condition P1 --all-folds --max-epochs 50 --patience 10
+python training/train_pitch_motion_ablation.py --condition P2 --all-folds --max-epochs 50 --patience 10
+python training/train_pitch_motion_ablation.py --condition P3 --all-folds --max-epochs 50 --patience 10
+python training/evaluate_pitch_motion_ablation.py
+```
+
+See [`docs/step_15_learned_pitch_motion.md`](docs/step_15_learned_pitch_motion.md) — outcome `ESTIMATED_MOTION_REMAINS_BOTTLENECK` (neither learned representation beats the fixed φ baseline; oracle pitch dominates even more than Step 14's audio+oracle condition), decision `INVESTIGATE_ACOUSTIC_MOTION_ESTIMATION`.
+
+### Step 16 — Fine-contour acoustic pitch audit
+
+Diagnostic-only audit (no training, no model changes): exactly how does estimated acoustic pitch motion differ from the oracle contour in ways that destroy T0-T3 information? Separates pitch-value error from octave/register error, temporal lag, temporal smoothing, slope/turning-point error, jitter, quantization, and harmonic/drone confusion, then tests the audit-justified corrections downstream using Step 15's frozen P0 classifier. Writes under `output/pitch_diagnostics/pitch_audit/` and [`docs/step_16_acoustic_pitch_audit.md`](docs/step_16_acoustic_pitch_audit.md).
+
+```bash
+python -m training.pitch_diagnostics.pitch_audit.motion
+python -m training.pitch_diagnostics.pitch_audit.shape
+python -m training.pitch_diagnostics.pitch_audit.salience_and_harmonics
+python -m training.pitch_diagnostics.pitch_audit.counterfactual
+python -m training.pitch_diagnostics.pitch_audit.phase_and_recording
+python -m training.pitch_diagnostics.pitch_audit.visualize
+```
+
+See [`docs/step_16_acoustic_pitch_audit.md`](docs/step_16_acoustic_pitch_audit.md) — primary diagnosis `TEMPORAL_RESOLUTION_LIMITED` (the decoder smooths/staircases away short-timescale, direction-reversing motion; register- and lag-correction counterfactuals both tested at ≈0 downstream effect), recommendation: investigate the Viterbi movement-cost decoder's smoothing behavior in Step 17.
 
 ---
 

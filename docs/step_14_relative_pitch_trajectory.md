@@ -1,5 +1,7 @@
 # Step 14 — Relative-Pitch-Augmented Trajectory Classification
 
+> **Follow-up:** the decision to improve relative-pitch estimation was tested more specifically in [`docs/step_15_learned_pitch_motion.md`](step_15_learned_pitch_motion.md) — is information lost at the decoded-path or salience-collapse stage, or is the acoustic estimate itself the bottleneck? Neither a learned dense-delta representation (P1) nor a salience-preserving representation (P2) beat the fixed φ baseline (P0); oracle pitch (P3) dominates even more dramatically than this step's condition D. Decision: `INVESTIGATE_ACOUSTIC_MOTION_ESTIMATION`.
+
 A controlled feature ablation on the actual task (`audio → T0/T1/T2/T3`), following Step 13's `RELATIVE_PITCH_PARTIAL` verdict. No pitch-frontend redesign, no register-decoder work, no class weighting, no architecture search — one shared TCN classifier, four input conditions.
 
 Frozen references: [`docs/step_13_relative_pitch.md`](step_13_relative_pitch.md), [`docs/step_9_c_report.md`](step_9_c_report.md) (original B0/B1/C).

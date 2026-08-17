@@ -136,6 +136,7 @@ class FramewiseExcerptDataset(Dataset):
         cache_excerpts: int | None = None,
         estimated_pitch: dict[str, np.ndarray] | None = None,
         compute_pitch_features: bool = False,
+        relative_salience: dict[str, np.ndarray] | None = None,
     ) -> None:
         self.index = index
         self.pool = index.filter_recordings(set(recording_ids))
@@ -147,6 +148,7 @@ class FramewiseExcerptDataset(Dataset):
         self.sigma_pitch = sigma_pitch
         self.estimated_pitch = estimated_pitch
         self.compute_pitch_features = compute_pitch_features
+        self.relative_salience = relative_salience
         self.rng = np.random.default_rng(seed)
         self.excerpts_per_epoch = excerpts_per_epoch or max(len(self.pool) * 50, 256)
         self._cache: list[dict[str, Any]] | None = None
@@ -235,6 +237,13 @@ class FramewiseExcerptDataset(Dataset):
             else:
                 sample["phi_estimated"] = torch.zeros_like(sample["phi_oracle"])
 
+        if self.relative_salience is not None:
+            sal_full = self.relative_salience[lane.recording_id]  # [W_BINS, n_frames]
+            sal_slice = sal_full[:, start:end]
+            if pad_len > 0:
+                sal_slice = np.pad(sal_slice, ((0, 0), (0, pad_len)), mode="constant")
+            sample["relative_salience"] = torch.from_numpy(sal_slice[np.newaxis].astype(np.float32))
+
         return sample
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
@@ -265,6 +274,8 @@ def collate_excerpts(batch: list[dict[str, Any]]) -> dict[str, Any]:
     if "phi_oracle" in batch[0]:
         out["phi_oracle"] = torch.stack([b["phi_oracle"] for b in batch])
         out["phi_estimated"] = torch.stack([b["phi_estimated"] for b in batch])
+    if "relative_salience" in batch[0]:
+        out["relative_salience"] = torch.stack([b["relative_salience"] for b in batch])
     return out
 
 
@@ -282,6 +293,7 @@ class FullRecordingDataset(Dataset):
         sigma_pitch: float | None = None,
         estimated_pitch: dict[str, np.ndarray] | None = None,
         compute_pitch_features: bool = False,
+        relative_salience: dict[str, np.ndarray] | None = None,
     ) -> None:
         self.index = index
         self.pool = index.filter_recordings(set(recording_ids))
@@ -291,6 +303,7 @@ class FullRecordingDataset(Dataset):
         self.sigma_pitch = sigma_pitch
         self.estimated_pitch = estimated_pitch
         self.compute_pitch_features = compute_pitch_features
+        self.relative_salience = relative_salience
 
     def __len__(self) -> int:
         return len(self.pool)
@@ -334,6 +347,9 @@ class FullRecordingDataset(Dataset):
                 sample["phi_estimated"] = torch.from_numpy(phi_estimated)
             else:
                 sample["phi_estimated"] = torch.zeros_like(sample["phi_oracle"])
+        if self.relative_salience is not None:
+            sal = self.relative_salience[lane.recording_id][:, : len(pitch_cents)]
+            sample["relative_salience"] = torch.from_numpy(sal[np.newaxis].astype(np.float32))
         return sample
 
 
@@ -386,6 +402,11 @@ def collate_variable_length(batch: list[dict[str, Any]]) -> dict[str, Any]:
         ])
         result["phi_estimated"] = torch.stack([
             _pad_2d(b["phi_estimated"], max_t - b["phi_estimated"].shape[0]) for b in batch
+        ])
+    if "relative_salience" in batch[0]:
+        result["relative_salience"] = torch.stack([
+            torch.nn.functional.pad(b["relative_salience"], (0, max_t - b["relative_salience"].shape[-1]))
+            for b in batch
         ])
     return result
 

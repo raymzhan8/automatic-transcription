@@ -206,6 +206,90 @@ class FramewiseConditionalTCNModel(nn.Module):
         return type_logits
 
 
+class PitchMotionEncoder(nn.Module):
+    """Step 15 P1/P3: small dedicated pitch-motion encoder. Input is the
+    DENSE, per-frame, octave-unwrapped frame-to-frame delta (1 channel --
+    the offset=1 slice of Step 14's phi, spec section 5's "frame-to-frame
+    octave-unwrapped increments, let the temporal encoder integrate them"
+    alternative), not the 4 hand-picked Step-14 offsets. A 1x1 Conv1d lifts
+    it to `hidden` channels, then the SAME TemporalConvNet class used
+    elsewhere in this project (kernel=5, dilations=(1,2,4,8) -> 61-frame /
+    610ms receptive field, spec section 6's ~0.5-1.0s target) lets the
+    model learn its own multi-scale combination instead of 4 fixed taps.
+    """
+
+    def __init__(self, *, in_channels: int = 1, hidden: int = 32,
+                 tcn_dilations: tuple[int, ...] = (1, 2, 4, 8)) -> None:
+        super().__init__()
+        self.proj = nn.Conv1d(in_channels, hidden, kernel_size=1)
+        self.tcn = TemporalConvNet(channels=hidden, dilations=tcn_dilations)
+        self.out_channels = hidden
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: [B, in_channels, T] -> [B, hidden, T]."""
+        return self.tcn(self.proj(x))
+
+
+class SalienceFrequencyCNN(nn.Module):
+    """Step 15 P2: small 2D frontend for the windowed relative-salience
+    input (73 bins, register-normalized -- see dense_relative_salience.py),
+    structurally identical to FrequencyCNN (same kernel sizes / two (4,1)
+    frequency-only pools / final AdaptiveMaxPool2d) but with much smaller
+    channel widths (16/32 vs 32/64/128), since the input axis itself is
+    already ~5x narrower and register-invariant."""
+
+    def __init__(self, in_channels: int = 1, out_channels: int = 32) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(in_channels, 16, kernel_size=(7, 3), padding=(3, 1)),
+            nn.BatchNorm2d(16),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=(4, 1)),
+            nn.Conv2d(16, out_channels, kernel_size=(5, 3), padding=(2, 1)),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=(4, 1)),
+            nn.AdaptiveMaxPool2d((1, None)),
+        )
+        self.out_channels = out_channels
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x).squeeze(2)
+
+
+class SalienceMotionEncoder(nn.Module):
+    """Step 15 P2: SalienceFrequencyCNN + the same small TemporalConvNet
+    used by PitchMotionEncoder, so P1 and P2 differ only in what enters the
+    temporal encoder (a single decoded scalar vs. the full local salience
+    shape), not in temporal-encoder capacity."""
+
+    def __init__(self, *, hidden: int = 32, tcn_dilations: tuple[int, ...] = (1, 2, 4, 8)) -> None:
+        super().__init__()
+        self.freq_cnn = SalienceFrequencyCNN(out_channels=hidden)
+        self.tcn = TemporalConvNet(channels=hidden, dilations=tcn_dilations)
+        self.out_channels = hidden
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: [B, 1, W_BINS, T] -> [B, hidden, T]."""
+        return self.tcn(self.freq_cnn(x))
+
+
+class PitchOnlyClassifier(nn.Module):
+    """Step 15: encoder (PitchMotionEncoder or SalienceMotionEncoder) + a
+    linear type head -- the shared "temporal classifier" shape for P1/P2/P3
+    (P0 reuses Step 14's FramewiseConditionalTCNModel(use_pitch-only)
+    unchanged as the reproduction anchor)."""
+
+    def __init__(self, encoder: nn.Module, num_types: int = 4) -> None:
+        super().__init__()
+        self.encoder = encoder
+        self.type_head = nn.Linear(encoder.out_channels, num_types)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.encoder(x)  # [B, C, T]
+        return self.type_head(h.transpose(1, 2))
+
+
 def count_params(module: nn.Module) -> int:
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
