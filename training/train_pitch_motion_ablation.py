@@ -62,6 +62,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--manifest-name", default="grouped_kfold_k5_seed42.json")
+    p.add_argument("--pitch-variant", choices=("D1", "D0", "0.25x", "0.5x"), default="D1",
+                    help="Step 17/18: D1 (default, Fused+D3/1.0x), D0 (framewise argmax/0x), "
+                         "or 0.25x/0.5x (Step 17's movement-cost sweep points)")
     return p.parse_args()
 
 
@@ -164,14 +167,21 @@ def fold_pitch_stats_for(condition: str, train_ids, index, estimated_pitch) -> t
 
 
 def train_fold(condition, fold_index, *, repo_root, output_dir, tiny_overfit, max_epochs, patience,
-                excerpts_per_epoch, batch_size, seed, manifest_name) -> dict[str, Any]:
+                excerpts_per_epoch, batch_size, seed, manifest_name, estimated_pitch_override=None) -> dict[str, Any]:
+    """Step 17: `estimated_pitch_override` lets condition P0 be retrained on
+    a different pitch-path cache (e.g. D0, the framewise-argmax decode)
+    instead of the default D1/Fused+D3 -- same architecture, folds, seeds,
+    budget, sampler, loss, and normalization protocol (fold-wise phi stats
+    are re-derived from whichever source is actually used), per Step 17
+    spec section 14's fallback when frozen-model evaluation would be
+    invalid across two very differently-distributed pitch sources."""
     set_seed(seed + fold_index)
     device = get_device()
 
     split, fold_summary = prepare_fold(repo_root, fold_index, manifest_name=manifest_name, seed=seed)
     mu_cqt, sigma_cqt = load_fold_cqt_stats(fold_index, repo_root)
     index = RecordingLaneIndex.build(repo_root)
-    estimated_pitch = load_dense_estimated_pitch()
+    estimated_pitch = estimated_pitch_override if estimated_pitch_override is not None else load_dense_estimated_pitch()
     relative_salience = build_relative_salience() if condition == "P2" else None
 
     phi_mu, phi_sigma = fold_pitch_stats_for(condition, split.train_recording_ids, index, estimated_pitch)
@@ -265,22 +275,45 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     folds = list(range(5)) if args.all_folds else [args.fold if args.fold is not None else 0]
 
+    estimated_pitch_override = None
+    condition_label = args.condition
+    if args.pitch_variant != "D1":
+        if args.condition != "P0":
+            raise ValueError("--pitch-variant other than D1 is only meaningful with --condition P0 (Step 17/18's downstream test)")
+        if args.pitch_variant == "D0":
+            from training.pitch_diagnostics.relative_pitch.dense_framewise_argmax_path import build as build_variant
+            estimated_pitch_override = build_variant()
+        else:
+            from training.pitch_diagnostics.relative_pitch.dense_lambda_sweep_path import build as build_sweep
+            estimated_pitch_override = build_sweep(float(args.pitch_variant.rstrip("x")))
+        condition_label = f"P0_{args.pitch_variant}"  # separate run_dir from the existing D1-trained P0
+
     results = []
     for fold in folds:
-        print(f"\n=== condition {args.condition} fold {fold} ===")
+        print(f"\n=== condition {condition_label} fold {fold} ===")
         results.append(train_fold(
             args.condition, fold, repo_root=args.repo_root, output_dir=args.output_dir,
             tiny_overfit=args.tiny_overfit, max_epochs=args.max_epochs, patience=args.patience,
             excerpts_per_epoch=args.excerpts_per_epoch, batch_size=args.batch_size,
             seed=args.seed, manifest_name=args.manifest_name,
+            estimated_pitch_override=estimated_pitch_override,
         ))
+        if args.pitch_variant != "D1":
+            # train_fold writes under condition_P0/; move/relabel to condition_{label}/ for this fold
+            src = args.output_dir / "condition_P0" / f"fold_{fold}"
+            dst = args.output_dir / f"condition_{condition_label}" / f"fold_{fold}"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if dst.exists():
+                import shutil
+                shutil.rmtree(dst)
+            src.rename(dst)
 
     summary = {
-        "condition": args.condition, "timestamp": datetime.now(timezone.utc).isoformat(),
+        "condition": condition_label, "timestamp": datetime.now(timezone.utc).isoformat(),
         "folds": results, "mean_val_macro_f1": float(np.mean([r["best_val_macro_f1"] for r in results])),
         "std_val_macro_f1": float(np.std([r["best_val_macro_f1"] for r in results])),
     }
-    out = args.output_dir / f"condition_{args.condition}" / "cv_summary.json"
+    out = args.output_dir / f"condition_{condition_label}" / "cv_summary.json"
     out.write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps({k: v for k, v in summary.items() if k != "folds"}, indent=2))
 

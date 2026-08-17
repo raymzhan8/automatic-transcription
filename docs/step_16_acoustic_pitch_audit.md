@@ -1,5 +1,7 @@
 # Step 16 — Fine-Contour Acoustic Pitch Audit
 
+> **Follow-up:** whether the Viterbi decoder specifically causes this loss (as opposed to the framewise evidence already lacking motion) was tested in [`docs/step_17_pre_post_viterbi_fidelity.md`](step_17_pre_post_viterbi_fidelity.md) by comparing pre- and post-Viterbi decodes from identical frozen salience. Verdict: `VITERBI_TRADES_JITTER_FOR_TOO_MUCH_SMOOTHING` — a real, monotonic, mechanistically-explained tradeoff (confirmed via a movement-cost sweep) between absolute accuracy and turning-point/T2-T3 fidelity, not a clean "decoder is broken" story.
+
 A diagnostic-only audit — **no training, no model changes, no register decoding, no fusion, no canonicalization changes.** Step 15 established `ESTIMATED_MOTION_REMAINS_BOTTLENECK`: oracle pitch motion drives trajectory macro F1 to 0.771 while every estimated-pitch representation tested (fixed φ, learned dense delta, learned salience window) tops out around 0.30-0.34. This step asks *exactly what acoustic error* is responsible, distinguishing pitch-value error, octave/register error, temporal lag, temporal smoothing, slope error, turning-point error, jitter, quantization, and harmonic/drone confusion — because each implies a different fix.
 
 Frozen references: [`docs/step_15_learned_pitch_motion.md`](step_15_learned_pitch_motion.md), [`docs/step_13_relative_pitch.md`](step_13_relative_pitch.md).

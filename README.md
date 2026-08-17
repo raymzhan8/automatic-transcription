@@ -149,7 +149,7 @@ Clips shorter than one second are zero-padded; longer ones are truncated. Both t
 
 ---
 
-## Canonical / framewise pipeline (Steps 1–16)
+## Canonical / framewise pipeline (Steps 1–20)
 
 This is the active research track: build a continuous, lossless canonical representation of each transcription, then train framewise models on it. Step numbers here match `docs/step_N_*.md` exactly, so a doc's own title always agrees with the section that links it (`docs/step_4_5_canonical_trajectory_target.md` is linked from Steps 3 and 4, `docs/step_12_5_fusion_viterbi.md` from Step 12.5, and so on). The earlier, still-runnable CNN spectrogram-classification pipeline is described afterward, in its own unnumbered section.
 
@@ -512,6 +512,58 @@ python -m training.pitch_diagnostics.pitch_audit.visualize
 ```
 
 See [`docs/step_16_acoustic_pitch_audit.md`](docs/step_16_acoustic_pitch_audit.md) — primary diagnosis `TEMPORAL_RESOLUTION_LIMITED` (the decoder smooths/staircases away short-timescale, direction-reversing motion; register- and lag-correction counterfactuals both tested at ≈0 downstream effect), recommendation: investigate the Viterbi movement-cost decoder's smoothing behavior in Step 17.
+
+### Step 17 — Pre-Viterbi vs. post-Viterbi fine-motion fidelity
+
+Diagnostic decoder ablation: is fine motion lost in the framewise salience evidence itself, or suppressed by the Viterbi temporal decoder built on top of it? Compares D0 (framewise-independent argmax, no temporal cost) against D1 (the current frozen Fused+D3 Viterbi decode) from byte-identical fused salience, then runs a small movement-cost sweep and a downstream trajectory retrain to connect decoder behavior directly to the T0-T3 task. Writes under `output/pitch_diagnostics/pitch_audit/` and [`docs/step_17_pre_post_viterbi_fidelity.md`](docs/step_17_pre_post_viterbi_fidelity.md).
+
+```bash
+python training/pitch_diagnostics/relative_pitch/dense_framewise_argmax_path.py
+python -m training.pitch_diagnostics.pitch_audit.decoder_ablation
+python -m training.pitch_diagnostics.pitch_audit.visualize_decoder
+python training/train_pitch_motion_ablation.py --condition P0 --pitch-variant D0 --all-folds --max-epochs 50 --patience 10
+python -m training.pitch_diagnostics.pitch_audit.evaluate_d0_downstream
+python training/pitch_diagnostics/relative_pitch/dense_lambda_sweep_path.py
+python -m training.pitch_diagnostics.pitch_audit.lambda_sweep_diagnostics
+```
+
+See [`docs/step_17_pre_post_viterbi_fidelity.md`](docs/step_17_pre_post_viterbi_fidelity.md) — outcome `VITERBI_TRADES_JITTER_FOR_TOO_MUCH_SMOOTHING` (a real, monotonic, mechanistically-explained tradeoff between absolute accuracy and T2/T3-relevant turning-point fidelity — confirmed via a movement-cost sweep, not just a two-point comparison), decision `RETUNE_MOTION_COST_FOR_TRAJECTORIES`.
+
+### Step 18 — Trajectory-optimized movement-cost selection
+
+Closing hyperparameter ablation: trains the two movement-cost settings (0.25x, 0.5x) Step 17 left untested downstream, then selects the operating point using trajectory macro F1 alone — with an explicit fold- and recording-consistency check before calling any pooled improvement a real win. Writes under `output/pitch_motion_ablation/` and [`docs/step_18_lambda_selection.md`](docs/step_18_lambda_selection.md).
+
+```bash
+python training/train_pitch_motion_ablation.py --condition P0 --pitch-variant 0.25x --all-folds --max-epochs 50 --patience 10
+python training/train_pitch_motion_ablation.py --condition P0 --pitch-variant 0.5x  --all-folds --max-epochs 50 --patience 10
+python -m training.pitch_diagnostics.pitch_audit.evaluate_lambda_downstream
+```
+
+See [`docs/step_18_lambda_selection.md`](docs/step_18_lambda_selection.md) — outcome `NO_MEANINGFUL_LAMBDA_DIFFERENCE` (the pooled/grouped-mean edge for an intermediate setting did not survive fold- or recording-level scrutiny — driven almost entirely by one fold, with a minority of recordings actually improving), decision `FREEZE_LAMBDA_AND_MOVE_UPSTREAM`. Movement-cost tuning is now closed; Step 19 should investigate the pre-decoder framewise acoustic evidence directly.
+
+### Step 19 — Pre-decoder fine-motion evidence localization
+
+With decoder/lambda tuning closed (Step 18), traces the oracle-vs-estimated pitch gap (trajectory macro F1 0.771 vs. ~0.33-0.34) one stage further upstream: does fine trajectory-relevant motion disappear at the acoustic representation (CQT), the salience/candidate score, or framewise candidate selection? Combines a theoretical CQT analysis-window calculation, per-frame rank/motion-contrast/continuity audits at each stage, a zero-delta causal decomposition, and a synthetic no-learning sanity test of the CQT alone. No new model trained. Writes under `output/pitch_diagnostics/pitch_audit/` and [`docs/step_19_predecoder_evidence_localization.md`](docs/step_19_predecoder_evidence_localization.md).
+
+```bash
+python -m training.pitch_diagnostics.pitch_audit.predecoder_audit
+python -m training.pitch_diagnostics.pitch_audit.synthetic_resolution_test
+python -m training.pitch_diagnostics.pitch_audit.visualize_predecoder
+```
+
+See [`docs/step_19_predecoder_evidence_localization.md`](docs/step_19_predecoder_evidence_localization.md) — diagnosis `ACOUSTIC_REPRESENTATION_LIMITED` (the CQT's own analysis window, 130-1000ms across the candidate frequency range, is too wide for T1-T3's 10-40ms motion scale; salience and framewise selection both perform reasonably well given what the acoustic stage hands them — salience consistently *improves* on raw acoustic evidence rather than degrading it), decision gate `CHANGE_ACOUSTIC_REPRESENTATION`. Step 20 should shorten the CQT's effective temporal window (e.g. lower `filter_scale` or an alternative fixed-window front end restricted to the existing candidate band) and re-run this step's diagnostics on the new front end alone before any retraining.
+
+### Step 20 — Acoustic frontend temporal-resolution bake-off (Phase A)
+
+Controlled, frontend-only comparison (no learned model, no salience, no decoder) of the current CQT against shorter-context CQT variants (`filter_scale` 0.5/0.25), fixed-window STFT (46/93/186ms), and a simple untrained multi-resolution combination — real-data acoustic-rank/motion-contrast/turning-point audits across all 17 recordings plus a synthetic no-learning benchmark and a low-frequency stress test. Writes under `output/pitch_diagnostics/pitch_audit/` and [`docs/step_20_acoustic_frontend_bakeoff.md`](docs/step_20_acoustic_frontend_bakeoff.md).
+
+```bash
+python -m training.pitch_diagnostics.pitch_audit.frontend_bakeoff
+python -m training.pitch_diagnostics.pitch_audit.frontend_synthetic
+python -m training.pitch_diagnostics.pitch_audit.frontend_visualize
+```
+
+See [`docs/step_20_acoustic_frontend_bakeoff.md`](docs/step_20_acoustic_frontend_bakeoff.md) — Phase A outcome `FRONTEND_CHALLENGER_FOUND`, selected challenger `A1a_cqt_fs0.5` (CQT with `filter_scale=0.5`): substantially repairs T3's motion-discrimination pathology and turning-point degradation while leaving T0/T1/T2 acoustic rank nearly unchanged. STFT-family frontends were decisively ruled out despite superficially attractive raw rank numbers (catastrophic low-frequency resolution, below-chance motion contrast, 90%+ sub-resolution rates for real T1-T3 motion). Phase B (retrain salience + trajectory classifier on the new frontend) is gated on this result and not yet started — a multi-hour training commitment distinct from Phase A's ~10-minute deterministic audit.
 
 ---
 

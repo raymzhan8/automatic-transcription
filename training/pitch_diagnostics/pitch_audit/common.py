@@ -44,11 +44,33 @@ def recording_fold_map(repo_root: Path = REPO_ROOT) -> dict[str, int]:
     return out
 
 
-def build_bundles(repo_root: Path = REPO_ROOT) -> list[dict[str, Any]]:
+def _load_estimated_pitch_variant(variant: str) -> dict[str, np.ndarray]:
+    """variant='D1' (default): Step 13's frozen Fused+D3 Viterbi decode.
+    variant='D0': Step 17's framewise-independent argmax over the SAME
+    frozen fused salience -- no temporal transition cost. Both built from
+    identical per-fold checkpoints/fusion hyperparameters; D0 differs only
+    in skipping the Viterbi call (spec section 2)."""
+    if variant == "D1":
+        return load_dense_estimated_pitch()
+    if variant == "D0":
+        from training.pitch_diagnostics.relative_pitch.dense_framewise_argmax_path import build as build_d0
+        return build_d0()
+    if variant in ("0.25x", "0.5x"):
+        from training.pitch_diagnostics.relative_pitch.dense_lambda_sweep_path import build as build_sweep
+        return build_sweep(float(variant.rstrip("x")))
+    if variant == "CREPE":
+        from training.pitch_diagnostics.relative_pitch.dense_crepe_path import build as build_crepe
+        return build_crepe()
+    raise ValueError(f"unknown pitch-path variant {variant!r}")
+
+
+def build_bundles(repo_root: Path = REPO_ROOT, variant: str = "D1") -> list[dict[str, Any]]:
     """One bundle per recording, full native grid (not valid-only), so
-    boundary/phase/lag analyses have real temporal continuity to work with."""
+    boundary/phase/lag analyses have real temporal continuity to work with.
+    `variant` selects the estimated-pitch source (D0 or D1); GT and every
+    other field are identical regardless."""
     index = RecordingLaneIndex.build(repo_root)
-    estimated_pitch = load_dense_estimated_pitch()
+    estimated_pitch = _load_estimated_pitch_variant(variant)
     fold_map = recording_fold_map(repo_root)
 
     bundles = []
@@ -67,6 +89,7 @@ def build_bundles(repo_root: Path = REPO_ROOT) -> list[dict[str, Any]]:
 
         bundles.append({
             "recording_id": rid,
+            "variant": variant,
             "fold": fold_map.get(rid),
             "n": n,
             "times": times,
