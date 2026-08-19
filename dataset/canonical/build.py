@@ -470,7 +470,10 @@ def build_recording(
                 }
             )
 
-    audio = build_audio_block(recording_id, piece_json.get("audioID"), repo_root)
+    audio = build_audio_block(
+        recording_id, piece_json.get("audioID"), repo_root,
+        solo_instrument=piece_json.get("soloInstrument"),
+    )
     primary_lane = lanes[0]["lane_id"] if lanes else lane_id(0, 0)
     coverage = build_coverage(
         trajectories,

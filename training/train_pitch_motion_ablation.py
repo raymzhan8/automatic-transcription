@@ -62,9 +62,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--manifest-name", default="grouped_kfold_k5_seed42.json")
-    p.add_argument("--pitch-variant", choices=("D1", "D0", "0.25x", "0.5x"), default="D1",
+    p.add_argument("--pitch-variant", choices=("D1", "D0", "0.25x", "0.5x", "CREPE"), default="D1",
                     help="Step 17/18: D1 (default, Fused+D3/1.0x), D0 (framewise argmax/0x), "
-                         "or 0.25x/0.5x (Step 17's movement-cost sweep points)")
+                         "0.25x/0.5x (Step 17's movement-cost sweep points), or CREPE "
+                         "(Step 21: pretrained torchcrepe dense path, frozen as the new default "
+                         "pitch source going forward)")
     return p.parse_args()
 
 
@@ -282,6 +284,9 @@ def main() -> None:
             raise ValueError("--pitch-variant other than D1 is only meaningful with --condition P0 (Step 17/18's downstream test)")
         if args.pitch_variant == "D0":
             from training.pitch_diagnostics.relative_pitch.dense_framewise_argmax_path import build as build_variant
+            estimated_pitch_override = build_variant()
+        elif args.pitch_variant == "CREPE":
+            from training.pitch_diagnostics.relative_pitch.dense_crepe_path import build as build_variant
             estimated_pitch_override = build_variant()
         else:
             from training.pitch_diagnostics.relative_pitch.dense_lambda_sweep_path import build as build_sweep

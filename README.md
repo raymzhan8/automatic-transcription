@@ -149,7 +149,7 @@ Clips shorter than one second are zero-padded; longer ones are truncated. Both t
 
 ---
 
-## Canonical / framewise pipeline (Steps 1–20)
+## Canonical / framewise pipeline (Steps 1–26)
 
 This is the active research track: build a continuous, lossless canonical representation of each transcription, then train framewise models on it. Step numbers here match `docs/step_N_*.md` exactly, so a doc's own title always agrees with the section that links it (`docs/step_4_5_canonical_trajectory_target.md` is linked from Steps 3 and 4, `docs/step_12_5_fusion_viterbi.md` from Step 12.5, and so on). The earlier, still-runnable CNN spectrogram-classification pipeline is described afterward, in its own unnumbered section.
 
@@ -564,6 +564,80 @@ python -m training.pitch_diagnostics.pitch_audit.frontend_visualize
 ```
 
 See [`docs/step_20_acoustic_frontend_bakeoff.md`](docs/step_20_acoustic_frontend_bakeoff.md) — Phase A outcome `FRONTEND_CHALLENGER_FOUND`, selected challenger `A1a_cqt_fs0.5` (CQT with `filter_scale=0.5`): substantially repairs T3's motion-discrimination pathology and turning-point degradation while leaving T0/T1/T2 acoustic rank nearly unchanged. STFT-family frontends were decisively ruled out despite superficially attractive raw rank numbers (catastrophic low-frequency resolution, below-chance motion contrast, 90%+ sub-resolution rates for real T1-T3 motion). Phase B (retrain salience + trajectory classifier on the new frontend) is gated on this result and not yet started — a multi-hour training commitment distinct from Phase A's ~10-minute deterministic audit.
+
+### Step 21 — Freeze CREPE as pitch source + return to trajectory modeling
+
+Ends the pitch-frontend research branch (Steps 10-20). **CREPE (pretrained `torchcrepe`) is now the frozen default estimated-pitch source**, replacing the custom CQT/salience/Viterbi pipeline; no further CQT/STFT/`filter_scale`/salience/decoder optimization is in scope. Validates CREPE's alignment against the canonical framewise dataset, retrains the existing non-oracle P0 architecture (`--pitch-variant CREPE`, same architecture/protocol/folds as D1) with fold-specific normalization, and compares it against the existing D1 and oracle results without retraining those baselines. Writes under `output/pitch_motion_ablation/condition_P0_CREPE/` and [`docs/step_21_crepe_baseline.md`](docs/step_21_crepe_baseline.md).
+
+```bash
+python -m training.pitch_diagnostics.relative_pitch.validate_crepe_alignment
+python training/train_pitch_motion_ablation.py --condition P0 --pitch-variant CREPE --all-folds --max-epochs 50 --patience 10
+python -m training.pitch_diagnostics.pitch_audit.evaluate_crepe_downstream
+```
+
+See [`docs/step_21_crepe_baseline.md`](docs/step_21_crepe_baseline.md) — outcome `CREPE_WORSE_THAN_D1`: pooled/grouped-mean trajectory macro F1 both decline slightly with CREPE (0.338→0.320 pooled, 0.348→0.299 grouped mean), entirely driven by a near-total T3 collapse (F1 0.085→0.003, uniform across all 5 folds and 16/17 recordings) that arithmetically cancels small T0/T2 gains — despite CREPE decisively beating D1 on essentially every raw pitch-motion-fidelity metric (MAE, turning-point recall, velocity correlation, staircasing). CREPE remains the frozen default pitch source per this step's own directive; the open question is redirected to trajectory modeling (whether the existing φ-delta representation/normalization, implicitly tuned against D1's staircased signal, is mismatched to CREPE's continuous one), not pitch estimation. No further pitch-frontend work is in scope.
+
+### Step 22 — Oracle-boundary normalized contour-shape classification
+
+Before attempting continuous segmentation: given the *correct* GT primitive boundaries (used only because this is a segment-normalized shape diagnostic in isolation), does normalized pitch-contour geometry — phase resampled to [0,1] on a 64-point grid, pitch span/direction removed — distinguish Fixed/Cosine/Sloped-start/Sloped-end at all, from CREPE and not just the oracle parametric curve? Builds the full 7,177-primitive corpus for both the oracle analytic contour and CREPE, validates the semantic hypothesis, trains a tiny logistic-regression baseline and a small 1D CNN (grouped 5-fold, same protocol for both sources), and tests boundary-perturbation and duration/pitch-span robustness. Writes under `output/shape_classification/` and [`docs/step_22_oracle_boundary_shape.md`](docs/step_22_oracle_boundary_shape.md).
+
+```bash
+python -m training.shape_classification.dataset
+python -m training.shape_classification.visualize
+python -m training.shape_classification.semantic_check
+python -m training.shape_classification.baseline
+python -m training.shape_classification.cnn_model
+python -m training.shape_classification.boundary_perturbation
+python -m training.shape_classification.duration_span_analysis
+python -m training.shape_classification.t2_t3_analysis
+```
+
+See [`docs/step_22_oracle_boundary_shape.md`](docs/step_22_oracle_boundary_shape.md) — outcome `ORACLE_SHAPE_WORKS_CREPE_DEGRADES`, decision gate `INVESTIGATE_CREPE_SHAPE_NOISE`: oracle geometry is highly separable (analytic F1 0.775, CNN F1 up to 0.801, Sloped-start/Sloped-end F1 0.90-1.00), but CREPE collapses completely on both bend-subtype classes (F1 exactly 0.000, analytic *and* CNN, in every duration bucket, every pitch-span bucket, and every boundary-perturbation level) — a majority-class collapse under unweighted CE and severe class imbalance (69% Cosine), not a lack of signal: a single-feature sign test still separates Sloped-start from Sloped-end from CREPE alone at 76.8% accuracy. This directly contradicts Step 21's hoped-for explanation — even with GT boundaries and full phase/span normalization, CREPE's Sloped-end analog still collapses, so the fixed-time-representation mismatch was not the (sole) cause. Recommended next step: class-weighted loss/balanced sampling and light CREPE-contour smoothing, both explicitly deferred in this step, before revisiting segmentation.
+
+### Step 23 — Can balanced training recover CREPE shape information?
+
+A training-objective/class-prior diagnostic, not a representation change: reuses Step 22's frozen CREPE `q(x)+dq/dx` contour and `ContourCNN` exactly, varying only how class imbalance (69% Cosine) is handled during training — B0 unweighted (reproduction check), B1 class-balanced sampling, B2 inverse-frequency-weighted cross entropy — plus a binary Sloped-start-vs-Sloped-end diagnostic and a natural-vs-balanced 3-way bend-only (Cosine/Sloped-start/Sloped-end) diagnostic. Reports prediction-frequency, precision/recall tradeoffs, fold/recording consistency, and confidence distributions for the true minority classes. Writes under `output/shape_classification/step23/` and [`docs/step_23_balanced_shape_classification.md`](docs/step_23_balanced_shape_classification.md).
+
+```bash
+python -m training.shape_classification.step23_experiments
+```
+
+See [`docs/step_23_balanced_shape_classification.md`](docs/step_23_balanced_shape_classification.md) — outcome `CLASS_BALANCING_REVEALS_TRADEOFF`, decision gate `INVESTIGATE_ROBUST_CREPE_SHAPE_REPRESENTATION`: both balancing interventions break Step 22's exact-zero Sloped-start/Sloped-end collapse (F1 0.000→0.08-0.24, prediction frequency 0%→24-30% each, mean confidence on true minority examples rising 5x and overtaking Cosine) — conclusively ruling out `CLASS_IMBALANCE_NOT_PRIMARY` — but Cosine F1 pays a large cost (0.82→0.46-0.55) and net four-class macro F1 improves only modestly (B1) or even declines pooled (B2), with real but inconsistent fold/recording-level gains (recording-level: a near coin-flip, 9 improved/8 worsened). The dominant remaining confusion in every balanced condition is with Cosine specifically, not Sloped-start-vs-Sloped-end itself — motivating a CREPE-contour-robustness investigation next, under the now-established balanced training protocol, rather than a further loss-engineering pass.
+
+### Step 24 — Canonical template fitting for CREPE trajectory shapes
+
+Since T1/T2/T3 are known parametric curves (not learned categories), this step recovers the four canonical templates directly from idtap's own `Trajectory.id0/id1/id2/id3` formulas and classifies CREPE segments by deterministic nearest-template MSE/Huber fitting — no learned decision boundary, no class prior, no training. Verifies templates against Step 22's oracle statistics, runs an oracle sanity gate, compares CREPE 4-way/T2-vs-T3/3-way-bend template classification against Step 23's CNNs, and analyzes Cosine-vs-Sloped margins, endpoint error, and duration/pitch-span dependence. Writes under `output/shape_classification/step24/` and [`docs/step_24_template_fitting.md`](docs/step_24_template_fitting.md).
+
+```bash
+python -m training.shape_classification.step24_experiments
+```
+
+See [`docs/step_24_template_fitting.md`](docs/step_24_template_fitting.md) — outcome `TEMPLATE_FITTING_NO_BETTER_THAN_CNN`, decision gate `REASSESS_DOWNSTREAM_TRAJECTORY_FEATURES`: templates recovered from idtap's own code reproduce Step 22's oracle statistics exactly and, on oracle contours, actually *beat* the oracle CNN (macro F1 0.849 vs. 0.801) — but on CREPE, template fitting underperforms Step 23's balanced CNN on every metric (4-way macro F1 0.241 vs. 0.311, 3-way bend 0.236 vs. 0.339), with the *opposite* failure mode (over-predicting the curved Sloped templates 64.6% of the time vs. their 12.8% true rate, rather than collapsing onto Cosine). Margin analysis shows real three-way geometric overlap (correct template beats Cosine only 54-59% of the time even for genuine Sloped-start/end); robust scoring and endpoint-error analysis both rule out jitter and endpoint noise as the dominant cause. Recommended Step 25: feed the four per-primitive template-fit errors as engineered features into Step 23's balanced CNN, since the two methods' biases are complementary rather than overlapping.
+
+### Step 25 — Do canonical template residuals add complementary information?
+
+The final small feature experiment in this branch: fuses Step 24's four-template error vector, rescaled to a fixed scale-normalized form `z_k=(E_k-min E)/(mean E+ε)`, into Step 23's balanced `ContourCNN` immediately before the final linear layer (+16 parameters), and compares against the raw-contour baseline (F0, reused Step 23 B1 exactly) and a template-evidence-only linear probe (F1). Reports fold/recording consistency, per-class attribution, prediction frequency, confusion matrices, a weight-magnitude and z-zeroed-at-test-time sanity check, representative changed decisions, and an optional oracle control. Writes under `output/shape_classification/step25/` and [`docs/step_25_template_feature_fusion.md`](docs/step_25_template_feature_fusion.md).
+
+```bash
+python -m training.shape_classification.step25_experiments
+```
+
+See [`docs/step_25_template_feature_fusion.md`](docs/step_25_template_feature_fusion.md) — outcome `TEMPLATE_FEATURES_REDUNDANT`, decision gate `STOP_INCREMENTAL_CONTOUR_FEATURE_ENGINEERING`: on CREPE, fusing template evidence changes macro F1 by an amount (+0.0008 pooled, −0.0010 grouped mean) far smaller than ordinary fold noise, with fold-level deltas that cancel (two large opposing swings) rather than accumulate, and a decisive z-zeroed-at-test-time ablation showing the trained model does *better* without the feature it was given (0.318 vs. 0.312), despite assigning it real weight magnitude. The template-evidence-only linear probe (F1) even underperforms Step 24's own deterministic argmin. An optional oracle control clarifies *why*: on clean contours the ordering inverts (template evidence alone is the single best feature, beating both the raw-contour CNN and the fusion model) — template geometry is not fundamentally uninformative, but CREPE's specific noise degrades it from the best available signal into a net-negative one. Six representations of the same CREPE pitch evidence (fixed-time motion, normalized contours, velocity, class balancing, template argmin, template fusion) have now converged on the same ≈0.30-0.31 CREPE ceiling; no further contour feature engineering is recommended. Step 26 should ask whether pitch alone is sufficient for this task or whether trajectory typing needs information beyond the extracted pitch contour.
+
+### Step 26 — Does audio add information beyond CREPE for oracle-boundary trajectory typing?
+
+An information-sufficiency experiment, not another pitch-frontend or contour-feature variant: with GT boundaries frozen, trains a small acoustic CQT-segment encoder (`AcousticCNN`, reusing the unmodified `training/features.py` frontend already validated across Steps 6-20) alongside Step 25's frozen CREPE branch, under four conditions — A0 CREPE-only (reused), A1 audio-only, A2 CREPE+audio (single linear fusion head, mirroring Step 25 F2's `extra_dim` pattern), A3 oracle-contour reference (loaded, not retrained), plus an optional A4 oracle+audio control. Reports fold/recording consistency, per-class attribution, confusion matrices, prediction frequency, CREPE-ambiguity/duration/pitch-span stratification, a modality-zeroing sanity check, and representative changed decisions. Writes under `output/shape_classification/step26/` and [`docs/step_26_audio_complementarity.md`](docs/step_26_audio_complementarity.md).
+
+```bash
+python -m training.shape_classification.step26_features
+python -m training.shape_classification.step26_experiments a0
+python -m training.shape_classification.step26_experiments a1
+python -m training.shape_classification.step26_experiments a2
+python -m training.shape_classification.step26_experiments a4
+python -m training.shape_classification.step26_experiments
+```
+
+See [`docs/step_26_audio_complementarity.md`](docs/step_26_audio_complementarity.md) — outcome `AUDIO_REVEALS_CLASS_TRADEOFF`, decision gate `INVESTIGATE_MULTIMODAL_FUSION`: A2 (CREPE+audio) clearly beats A0 on both pooled (0.3668 vs. 0.3107) and grouped-fold mean (0.3500±0.0770 vs. 0.3234±0.0893), with a fusion-usage sanity check (zeroing audio at test time collapses macro F1 to 0.160) confirming audio is genuinely, heavily used — but per-class attribution shows the gain is substantially a majority-class decision-boundary shift: Cosine recall rises 33.1%→72.7% while Sloped-start recall collapses 49.6%→8.3%, confirmed concretely in the confusion matrices and representative changed-decision examples. A4 (oracle+audio) only marginally beats A3 (oracle alone, +0.008), suggesting audio mainly compensates for CREPE's specific noise rather than adding information beyond clean pitch geometry. Recommended Step 27: test whether a minimally richer fusion head (still no architecture search) can recover Sloped-start without sacrificing Cosine's gain, before freezing this fusion or escalating to sequence/context modeling.
 
 ---
 

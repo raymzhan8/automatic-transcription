@@ -1,11 +1,14 @@
-"""Side experiment (post-Step 20): dense per-recording pitch path from a
-pretrained, generic monophonic pitch tracker (CREPE, via torchcrepe) run on
-the already-separated "vocals" stem, as an alternative to the whole
-CQT/salience/Viterbi pipeline. No training -- CREPE's public pretrained
-weights only. Produces the same {recording_id: log2_hz per native 10ms
-frame} shape as dense_framewise_argmax_path.py / dense_pitch_path.py so it
-can be evaluated with the identical Step 16-17 diagnostics via
-pitch_audit/common.py's `_load_estimated_pitch_variant`.
+"""Step 21: dense per-recording pitch path from a pretrained, generic
+monophonic pitch tracker (CREPE, via torchcrepe) run on the already-
+separated "vocals" stem (falling back to source audio), frozen as of Step
+21 as the project's default estimated-pitch source, replacing the
+CQT/salience/Viterbi pipeline (`dense_pitch_path.py`, D1). No training --
+CREPE's public pretrained weights only. Produces the same {recording_id:
+log2_hz per native 10ms frame} shape as dense_framewise_argmax_path.py /
+dense_pitch_path.py so it can be evaluated with the identical Step 16-17
+diagnostics via pitch_audit/common.py's `_load_estimated_pitch_variant`,
+and used as a `--pitch-variant CREPE` override in
+train_pitch_motion_ablation.py.
 """
 
 from __future__ import annotations

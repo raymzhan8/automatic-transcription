@@ -78,8 +78,21 @@ def build_audio_block(
     repo_root: Path,
     *,
     compute_sha256: bool = True,
+    solo_instrument: str | None = None,
 ) -> dict[str, Any]:
-    """Source WAV plus whatever stems the ``output/denoised/`` cache already holds."""
+    """Source WAV plus whatever stems the ``output/denoised/`` cache already holds.
+
+    ``role="vocals"`` names the isolated lead/foreground stem the pitch
+    pipeline prefers (`dense_crepe_path.py::_vocals_or_source_path`) --
+    functionally accurate even for a non-vocal solo instrument, since the
+    karaoke-style separation model isolates "lead melodic line vs.
+    accompaniment" regardless of what that lead line actually is. For
+    recordings whose solo instrument isn't vocal, the on-disk file is named
+    for what it actually contains (``<base>.sitar.wav`` etc., not
+    ``<base>.vocals.wav``) -- ``solo_instrument`` (lowercased, spaces
+    stripped) is checked as a fallback filename when the standard
+    ``.vocals.wav`` suffix isn't present, so the role label stays "vocals"
+    (unchanged meaning) while the filename stays honest."""
     files: list[dict[str, Any]] = []
     source = find_source_audio(repo_root, recording_id)
     if source is not None:
@@ -89,6 +102,11 @@ def build_audio_block(
         base = source.stem
         for role, suffix in DERIVED_STEM_SUFFIXES.items():
             stem_path = stem_dir / f"{base}{suffix}"
+            if not stem_path.exists() and role == "vocals" and solo_instrument:
+                slug = solo_instrument.strip().lower().replace(" ", "")
+                alt_path = stem_dir / f"{base}.{slug}.wav"
+                if alt_path.exists():
+                    stem_path = alt_path
             if stem_path.exists():
                 files.append(
                     describe_file(stem_path, role, repo_root, compute_sha256=compute_sha256)
