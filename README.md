@@ -149,7 +149,7 @@ Clips shorter than one second are zero-padded; longer ones are truncated. Both t
 
 ---
 
-## Canonical / framewise pipeline (Steps 1–26)
+## Canonical / framewise pipeline (Steps 1–27)
 
 This is the active research track: build a continuous, lossless canonical representation of each transcription, then train framewise models on it. Step numbers here match `docs/step_N_*.md` exactly, so a doc's own title always agrees with the section that links it (`docs/step_4_5_canonical_trajectory_target.md` is linked from Steps 3 and 4, `docs/step_12_5_fusion_viterbi.md` from Step 12.5, and so on). The earlier, still-runnable CNN spectrogram-classification pipeline is described afterward, in its own unnumbered section.
 
@@ -648,6 +648,18 @@ python -m training.shape_classification.step26_experiments
 ```
 
 See [`docs/step_26_audio_complementarity.md`](docs/step_26_audio_complementarity.md) — outcome `AUDIO_REVEALS_CLASS_TRADEOFF`, decision gate `INVESTIGATE_MULTIMODAL_FUSION`: A2 (CREPE+audio) clearly beats A0 on both pooled (0.3668 vs. 0.3107) and grouped-fold mean (0.3500±0.0770 vs. 0.3234±0.0893), with a fusion-usage sanity check (zeroing audio at test time collapses macro F1 to 0.160) confirming audio is genuinely, heavily used — but per-class attribution shows the gain is substantially a majority-class decision-boundary shift: Cosine recall rises 33.1%→72.7% while Sloped-start recall collapses 49.6%→8.3%, confirmed concretely in the confusion matrices and representative changed-decision examples. A4 (oracle+audio) only marginally beats A3 (oracle alone, +0.008), suggesting audio mainly compensates for CREPE's specific noise rather than adding information beyond clean pitch geometry. Recommended Step 27: test whether a minimally richer fusion head (still no architecture search) can recover Sloped-start without sacrificing Cosine's gain, before freezing this fusion or escalating to sequence/context modeling.
+
+**Between Steps 26 and 27**: a quick, targeted follow-up (not a numbered step) tested whether Sloped-start (T2) is data-starved — retraining Step 26 A0's exact protocol with T2's training pool deterministically subsampled to {25%, 50%, 75%, 100%} while every other class stays at full volume. Result: essentially flat (T2 F1 0.177→0.201→0.194→0.202 across the range; macro F1 flat 0.307-0.313), ruling out "collect more T2 examples" as a fix — precision in particular never moves (~0.12-0.14 regardless of volume). Code: `training/shape_classification/t2_learning_curve.py`; results: `output/shape_classification/t2_learning_curve.json`.
+
+### Step 27 — Can nonlinear audio–pitch interaction recover Sloped-start without sacrificing Cosine?
+
+Tests exactly one richer fusion mechanism against Step 26's linear fusion (L0, reused unchanged as Step 26 A2) — not a multimodal architecture search: L1 replaces `Linear(32,4)` with `Linear(32,16)→ReLU→Linear(16,4)`, `hidden=16` fixed before any result was examined, everything else (frozen encoders, data, protocol) identical. Includes a class-wise standardized-mean-difference diagnostic on the hidden activation itself, plus a deterministic recovery/breakage analysis against Step 26's known Cosine↔Sloped-start error cases. Writes under `output/shape_classification/step27/` and [`docs/step_27_nonlinear_multimodal_fusion.md`](docs/step_27_nonlinear_multimodal_fusion.md).
+
+```bash
+python -m training.shape_classification.step27_experiments
+```
+
+See [`docs/step_27_nonlinear_multimodal_fusion.md`](docs/step_27_nonlinear_multimodal_fusion.md) — outcome `NONLINEAR_FUSION_HURTS`, decision gate `INVESTIGATE_SEQUENCE_CONTEXT`: L1 is worse than L0 on every single class (macro F1 0.3668→0.3163), including Cosine, whose gain Step 26 had actually established (recall 0.727→0.547) — not a re-pointed tradeoff, a broad regression. The interaction diagnostic explains why: standardized mean difference between true-Cosine and true-Sloped-start hidden activations reaches a medium effect size (|d|>0.5) on 0 of 16 dimensions — the nonlinear layer never learned to represent the two classes distinctly. Of 295 cases Step 26 wrongly called Cosine (true Sloped-start), L1 recovers only 10 (3.4%); of 3,597 correct Cosine calls, L1 breaks 1,023 (28.4%). Per the step's own stopping rule: this was the final local-fusion experiment (pitch-only, audio-only, linear fusion, nonlinear fusion all tested under oracle boundaries) — no further local architecture work is recommended. Step 28 should test neighboring-trajectory / sequence context instead.
 
 ---
 
