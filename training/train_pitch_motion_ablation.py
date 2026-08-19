@@ -62,11 +62,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--manifest-name", default="grouped_kfold_k5_seed42.json")
-    p.add_argument("--pitch-variant", choices=("D1", "D0", "0.25x", "0.5x", "CREPE"), default="D1",
+    p.add_argument("--pitch-variant", choices=("D1", "D0", "0.25x", "0.5x", "CREPE", "fs0.5"), default="D1",
                     help="Step 17/18: D1 (default, Fused+D3/1.0x), D0 (framewise argmax/0x), "
-                         "0.25x/0.5x (Step 17's movement-cost sweep points), or CREPE "
+                         "0.25x/0.5x (Step 17's movement-cost sweep points), CREPE "
                          "(Step 21: pretrained torchcrepe dense path, frozen as the new default "
-                         "pitch source going forward)")
+                         "pitch source going forward), or fs0.5 (Step 20 Phase B: Fused+D3 "
+                         "rebuilt on the A1a_cqt_fs0.5 frontend)")
     return p.parse_args()
 
 
@@ -288,6 +289,9 @@ def main() -> None:
         elif args.pitch_variant == "CREPE":
             from training.pitch_diagnostics.relative_pitch.dense_crepe_path import build as build_variant
             estimated_pitch_override = build_variant()
+        elif args.pitch_variant == "fs0.5":
+            from training.pitch_diagnostics.pitch_audit.phase_b_fs0_5 import load_dense_estimated_pitch_fs0_5
+            estimated_pitch_override = load_dense_estimated_pitch_fs0_5()
         else:
             from training.pitch_diagnostics.relative_pitch.dense_lambda_sweep_path import build as build_sweep
             estimated_pitch_override = build_sweep(float(args.pitch_variant.rstrip("x")))

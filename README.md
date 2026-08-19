@@ -553,9 +553,9 @@ python -m training.pitch_diagnostics.pitch_audit.visualize_predecoder
 
 See [`docs/step_19_predecoder_evidence_localization.md`](docs/step_19_predecoder_evidence_localization.md) — diagnosis `ACOUSTIC_REPRESENTATION_LIMITED` (the CQT's own analysis window, 130-1000ms across the candidate frequency range, is too wide for T1-T3's 10-40ms motion scale; salience and framewise selection both perform reasonably well given what the acoustic stage hands them — salience consistently *improves* on raw acoustic evidence rather than degrading it), decision gate `CHANGE_ACOUSTIC_REPRESENTATION`. Step 20 should shorten the CQT's effective temporal window (e.g. lower `filter_scale` or an alternative fixed-window front end restricted to the existing candidate band) and re-run this step's diagnostics on the new front end alone before any retraining.
 
-### Step 20 — Acoustic frontend temporal-resolution bake-off (Phase A)
+### Step 20 — Acoustic frontend temporal-resolution bake-off
 
-Controlled, frontend-only comparison (no learned model, no salience, no decoder) of the current CQT against shorter-context CQT variants (`filter_scale` 0.5/0.25), fixed-window STFT (46/93/186ms), and a simple untrained multi-resolution combination — real-data acoustic-rank/motion-contrast/turning-point audits across all 17 recordings plus a synthetic no-learning benchmark and a low-frequency stress test. Writes under `output/pitch_diagnostics/pitch_audit/` and [`docs/step_20_acoustic_frontend_bakeoff.md`](docs/step_20_acoustic_frontend_bakeoff.md).
+**Phase A** — controlled, frontend-only comparison (no learned model, no salience, no decoder) of the current CQT against shorter-context CQT variants (`filter_scale` 0.5/0.25), fixed-window STFT (46/93/186ms), and a simple untrained multi-resolution combination — real-data acoustic-rank/motion-contrast/turning-point audits across all 17 recordings plus a synthetic no-learning benchmark and a low-frequency stress test. Writes under `output/pitch_diagnostics/pitch_audit/` and [`docs/step_20_acoustic_frontend_bakeoff.md`](docs/step_20_acoustic_frontend_bakeoff.md).
 
 ```bash
 python -m training.pitch_diagnostics.pitch_audit.frontend_bakeoff
@@ -563,7 +563,17 @@ python -m training.pitch_diagnostics.pitch_audit.frontend_synthetic
 python -m training.pitch_diagnostics.pitch_audit.frontend_visualize
 ```
 
-See [`docs/step_20_acoustic_frontend_bakeoff.md`](docs/step_20_acoustic_frontend_bakeoff.md) — Phase A outcome `FRONTEND_CHALLENGER_FOUND`, selected challenger `A1a_cqt_fs0.5` (CQT with `filter_scale=0.5`): substantially repairs T3's motion-discrimination pathology and turning-point degradation while leaving T0/T1/T2 acoustic rank nearly unchanged. STFT-family frontends were decisively ruled out despite superficially attractive raw rank numbers (catastrophic low-frequency resolution, below-chance motion contrast, 90%+ sub-resolution rates for real T1-T3 motion). Phase B (retrain salience + trajectory classifier on the new frontend) is gated on this result and not yet started — a multi-hour training commitment distinct from Phase A's ~10-minute deterministic audit.
+**Phase B** — retrains the harmonic-salience CNN, recalibrates the HPS/learned/fused D3 Viterbi decoder, rebuilds the Fused+D3 dense pitch path, and retrains the P0 trajectory classifier, all on the Phase A challenger frontend (`filter_scale=0.5`), reusing a shadow repo root so the frozen fs=1 production artifacts are never touched. Writes under `output/phase_b_fs0.5_shadow/`, `output/pitch_diagnostics/runs/harmonic_salience_abs_fs0.5/`, `output/pitch_diagnostics/register_resolution/phase_b_fs0.5_hyperparams_and_metrics.json`, `output/pitch_diagnostics/relative_pitch/dense_fused_d3_log2hz_fs0.5.pkl`, and `output/pitch_motion_ablation/condition_P0_fs0.5/`.
+
+```bash
+python -m training.pitch_diagnostics.pitch_audit.phase_b_fs0_5 salience
+python -m training.pitch_diagnostics.pitch_audit.phase_b_fs0_5 register
+python -m training.pitch_diagnostics.pitch_audit.phase_b_fs0_5 densepath
+python -m training.train_pitch_motion_ablation --condition P0 --pitch-variant fs0.5 --all-folds --max-epochs 50 --patience 10
+python -m training.pitch_diagnostics.pitch_audit.evaluate_fs0_5_downstream
+```
+
+See [`docs/step_20_acoustic_frontend_bakeoff.md`](docs/step_20_acoustic_frontend_bakeoff.md) — Phase A outcome `FRONTEND_CHALLENGER_FOUND`, selected challenger `A1a_cqt_fs0.5`. Phase B outcome **`FRONTEND_FIX_CONFIRMED_INSUFFICIENT`**: pitch-estimation quality clearly and consistently improved (Fused+D3 MAE 349.1c→273.2c, a 22% relative reduction; correct-octave rate 75.0%→81.4%), but downstream P0 trajectory macro F1 barely moved (pooled 0.338→0.342, grouped mean 0.348→0.351 ± 0.024) — closing roughly 1% of the 0.433-point oracle gap. The acoustic-representation hypothesis was real and correctly diagnosed, but not the dominant remaining bottleneck for trajectory typing specifically. T2 (Sloped-start) F1 remained ~0.15-0.17 regardless, now corroborated by Step 26's completely independent CREPE/audio branch also failing on the same class. Decision gate: `INVESTIGATE_SEQUENCE_CONTEXT`, with `REASSESS_T2_SPECIFICALLY` as a parallel narrower thread — no further pitch-representation or acoustic-frontend engineering recommended.
 
 ### Step 21 — Freeze CREPE as pitch source + return to trajectory modeling
 

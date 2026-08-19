@@ -266,6 +266,41 @@ This is exactly the tension spec §16/§26 anticipates ("A improves T2/T3 but hu
 
 ---
 
-## Phase B status
+## Phase B — results
 
-Per spec, Phase B (retrain the salience CNN and the P0 trajectory classifier on A1a's frontend, re-run the full pre-decoder audit including the zero-delta causal decomposition, and re-measure trajectory macro F1 end-to-end against oracle) is gated on Phase A selecting exactly one challenger, which it now has. Phase B is a substantially larger compute commitment than Phase A: it requires (a) building a full A1a feature cache and fold-wise CQT normalization statistics, (b) retraining the harmonic-salience CNN across 5 folds, (c) recalibrating HPS/learned fusion on the new salience scale using the frozen train/validation protocol, (d) rebuilding D0\*/D1\* dense paths, (e) re-running the Step 19-style pre-decoder audit, and (f) retraining the P0 trajectory classifier across 5 folds — realistically multiple hours of sequential training, distinct from Phase A's ~10 minutes of deterministic feature computation. This report stops at the Phase A checkpoint the spec itself defines ("Run Phase B ONLY if Phase A selects one clear challenger") to confirm the challenger and compute-budget commitment before starting that training run.
+Phase B was run to completion. **Scope actually executed**, stated explicitly since it narrows the original spec: (a) fs=0.5 CQT feature cache + fold-wise CQT/pitch normalization stats, (b) harmonic-salience CNN retrained across 5 folds, (c) HPS/learned/fused D3 Viterbi hyperparameters (lambda_t, fusion ratio) recalibrated on validation — D3 only, no D4 octave-penalty regrid (`dense_pitch_path.py` never consumes D4 hyperparameters, so it adds no value to this comparison), (d) the Fused+D3 dense pitch path rebuilt, (f) the P0 trajectory classifier retrained across 5 folds and evaluated on full held-out test recordings exactly as Step 15 evaluates production P0. Item (e), Step 19's full pre-decoder audit (rank/motion-contrast/continuity/zero-delta decomposition), was **not** re-run in full; pitch-estimation quality is instead reported via the same MAE/octave-accuracy metrics Steps 12/12.5 already use, directly comparable to their frozen fs=1 numbers. Code: `training/pitch_diagnostics/pitch_audit/phase_b_fs0_5.py`, `training/pitch_diagnostics/pitch_audit/evaluate_fs0_5_downstream.py`, `training/train_pitch_motion_ablation.py --pitch-variant fs0.5`. The fs=1 production pipeline (checkpoints, `decoder_ablation.json`, `fusion_viterbi_result.json`, `dense_fused_d3_log2hz.pkl`) is untouched — every Phase B artifact reads CQT data from a separate shadow repo root (`output/phase_b_fs0.5_shadow/`, symlinked to production except for `features/`/`normalization/`) and writes to `_fs0.5`-suffixed run names/filenames.
+
+**Pitch-estimation quality clearly improved, on every method and every metric:**
+
+| Method | fs=1 MAE | fs=0.5 MAE | fs=1 oct-adj MAE | fs=0.5 oct-adj MAE | fs=1 correct-octave | fs=0.5 correct-octave |
+|---|---:|---:|---:|---:|---:|---:|
+| HPS D3 | 317.5¢ | 288.7¢ | 77.1¢ | 70.6¢ | 79.4% | 81.4% |
+| Learned D3 | 377.2¢ | 308.4¢ | 72.6¢ | 69.1¢ | 73.0% | 79.0% |
+| **Fused D3** | **349.1¢** | **273.2¢** | **68.0¢** | **64.7¢** | **75.0%** | **81.4%** |
+
+Fused+D3 — the path that actually feeds the trajectory classifier — improves 22% relative on raw MAE and gains 6.4 points of correct-octave rate. This is a real, unambiguous, mechanistically-expected win for the shorter-window frontend, exactly as Step 19's diagnosis predicted.
+
+One caveat surfaced during training, reported rather than smoothed over: the salience CNN's own per-fold *validation* MAE (used for early stopping, not the pooled test numbers above) was unstable on fold 3 — 1039.5¢ vs. 105-146¢ on the other four folds, stopping at epoch 1. This did **not** propagate into the downstream pooled test metrics above or into fold 3's trajectory-classifier result below (0.345 macro F1, in line with its siblings) — the anomaly looks contained to that one early-stopping checkpoint's validation read, not a genuine failure of the fold-3 model as actually used. Not investigated further; flagged as a fragility worth knowing about, not fixed by retuning until it looks nicer.
+
+**Downstream trajectory macro F1 barely moved:**
+
+| Condition | Pooled test macro F1 | Grouped mean ± std | T0 F1 | T1 F1 | T2 F1 | T3 F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| P0, fs=1 (frozen, Step 15) | 0.338 | 0.348 ± 0.070 | 0.547 | 0.568 | 0.150 | 0.085 |
+| **P0, fs=0.5 (Phase B)** | **0.342** | **0.351 ± 0.024** | 0.567 | 0.560 | 0.168 | 0.073 |
+| P3, oracle (frozen, Step 15) | 0.771 | 0.778 ± 0.061 | — | — | 0.759 | 0.822 |
+
+Δ pooled = **+0.004**, Δ grouped mean = **+0.003** — of the 0.433-point oracle gap, fs=0.5 closes roughly **1%** of it, despite a 22% relative improvement in the underlying pitch estimate's own accuracy. Per-class movement is small and mixed (T0/T2 slightly up, T1/T3 slightly down), not a clean win or a clean tradeoff — genuinely flat. The one clear side effect is fold-to-fold stability: grouped std shrinks from 0.070 to 0.024, a real reduction in variance even though the mean barely shifts.
+
+**T2 (Sloped-start) remains the standout failure, and now with cross-branch corroboration.** F1 0.150→0.168 under fs=0.5 — still far below every other class, in a completely separate, independently-run branch of this project (`training/shape_classification/`, Steps 21-26) that also found Sloped-start uniquely unrecoverable from local pitch/audio evidence under *every* representation tried there (CREPE contour, audio-only, audio+CREPE fusion — see `docs/step_26_audio_complementarity.md` §14). Two independent architectures, two independent pitch sources (this pipeline's own Fused+D3 vs. CREPE), and now two independent acoustic frontends, all converge on the same class being the hard case. That convergence is stronger evidence than either branch alone that T2 is not primarily a pitch-representation problem.
+
+### Phase B outcome: `FRONTEND_FIX_CONFIRMED_INSUFFICIENT`
+
+The acoustic-representation hypothesis (Step 19) is **validated as real and correctly diagnosed** — pitch estimation is measurably, consistently better on the repaired frontend — but **not sufficient** to close a meaningful fraction of the oracle-vs-estimated trajectory-classification gap. This is the informative-negative-result case explicitly anticipated before running Phase B: a substantial, well-understood upstream fix producing a negligible downstream effect means the acoustic representation was not, after all, the dominant remaining bottleneck for trajectory typing specifically — something else between "accurate absolute pitch" and "correct trajectory type" is capping performance almost independently of continued pitch-accuracy gains.
+
+### Decision gate: `INVESTIGATE_SEQUENCE_CONTEXT`, with `REASSESS_T2_SPECIFICALLY` as a parallel, narrower thread
+
+No further acoustic-frontend or pitch-representation engineering is recommended — three independent representation efforts (this pipeline's salience/Viterbi decoder across two frontends, plus the CREPE/audio branch's six contour-feature variants) have each independently plateaued, and the one frontend-level fix with a clear mechanistic justification produced almost no downstream movement. Two next threads, not mutually exclusive:
+
+1. **Sequence/context modeling** — every result so far (this step and Steps 21-26) isolates a single trajectory's own local evidence window. Whether neighboring-trajectory context or longer temporal structure helps disambiguate trajectory type has never been tested.
+2. **T2 specifically** — F1 has never exceeded ~0.20 anywhere in this project regardless of pitch source, architecture, or frontend, despite T2 having non-trivial support (order 10k frames per fold in the framewise split). Worth a targeted check — data volume, label-boundary quality, or genuine geometric ambiguity with Cosine (Step 13 already found real oracle-pitch overlap) — before assuming more representation work of any kind will fix it.

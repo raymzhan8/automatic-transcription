@@ -16,8 +16,13 @@ BINS_PER_OCTAVE = 72
 ALIGN_TOLERANCE_S = 1e-6
 
 
-def cqt_log_magnitude(y: np.ndarray, sr: int = SR) -> tuple[np.ndarray, np.ndarray]:
-    """Return (native_frame_times_s, log10_cqt) for librosa default framing."""
+def cqt_log_magnitude(y: np.ndarray, sr: int = SR, *, filter_scale: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    """Return (native_frame_times_s, log10_cqt) for librosa default framing.
+
+    `filter_scale` defaults to librosa's own default (1.0) -- every trained
+    model in this repo up to and including Step 19 used this default
+    implicitly. Step 20 Phase B is the first caller to pass a non-default
+    value (0.5, the Phase A challenger `A1a_cqt_fs0.5`)."""
     mag = np.abs(
         librosa.cqt(
             y,
@@ -26,6 +31,7 @@ def cqt_log_magnitude(y: np.ndarray, sr: int = SR) -> tuple[np.ndarray, np.ndarr
             fmin=FMIN,
             n_bins=N_BINS,
             bins_per_octave=BINS_PER_OCTAVE,
+            filter_scale=filter_scale,
         )
     )
     log_mag = np.log10(np.maximum(mag, 1e-10))
