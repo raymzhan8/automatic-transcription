@@ -7,6 +7,8 @@ Research pipeline built on [IDTAP](https://idtap.org) (Swara Studio) transcripti
 
 Everything is driven by existing IDTAP annotations. No new hand-labeling is required.
 
+**New to this project?** [`docs/experiment_roadmap_plain_english.md`](docs/experiment_roadmap_plain_english.md) explains the whole Steps 1-29 research story — question, result, and plain-English interpretation for every step — without assuming familiarity with any individual technical report. Start there before the step-by-step section below.
+
 ---
 
 ## Project layout
