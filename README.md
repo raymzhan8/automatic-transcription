@@ -149,7 +149,7 @@ Clips shorter than one second are zero-padded; longer ones are truncated. Both t
 
 ---
 
-## Canonical / framewise pipeline (Steps 1–27)
+## Canonical / framewise pipeline (Steps 1–28)
 
 This is the active research track: build a continuous, lossless canonical representation of each transcription, then train framewise models on it. Step numbers here match `docs/step_N_*.md` exactly, so a doc's own title always agrees with the section that links it (`docs/step_4_5_canonical_trajectory_target.md` is linked from Steps 3 and 4, `docs/step_12_5_fusion_viterbi.md` from Step 12.5, and so on). The earlier, still-runnable CNN spectrogram-classification pipeline is described afterward, in its own unnumbered section.
 
@@ -660,6 +660,16 @@ python -m training.shape_classification.step27_experiments
 ```
 
 See [`docs/step_27_nonlinear_multimodal_fusion.md`](docs/step_27_nonlinear_multimodal_fusion.md) — outcome `NONLINEAR_FUSION_HURTS`, decision gate `INVESTIGATE_SEQUENCE_CONTEXT`: L1 is worse than L0 on every single class (macro F1 0.3668→0.3163), including Cosine, whose gain Step 26 had actually established (recall 0.727→0.547) — not a re-pointed tradeoff, a broad regression. The interaction diagnostic explains why: standardized mean difference between true-Cosine and true-Sloped-start hidden activations reaches a medium effect size (|d|>0.5) on 0 of 16 dimensions — the nonlinear layer never learned to represent the two classes distinctly. Of 295 cases Step 26 wrongly called Cosine (true Sloped-start), L1 recovers only 10 (3.4%); of 3,597 correct Cosine calls, L1 breaks 1,023 (28.4%). Per the step's own stopping rule: this was the final local-fusion experiment (pitch-only, audio-only, linear fusion, nonlinear fusion all tested under oracle boundaries) — no further local architecture work is recommended. Step 28 should test neighboring-trajectory / sequence context instead.
+
+### Step 28 — Does neighboring-trajectory context improve oracle-boundary typing?
+
+Tests whether the immediately adjacent trajectories' *observable* CREPE contour and audio (never their true labels — those are the prediction target, not a legitimate input) help classify the center trajectory. Three linear-only conditions, no recurrence/attention: C0 (Step 26 L0, reused unchanged), C1 (`[e_prev;e_center;e_next;masks] → Linear(98,4)`, one shared encoder applied to all three positions), C2 (neighbors contribute pitch-only, isolating whether any gain is audio- or pitch-driven). Includes a TRAIN-only descriptive transition-matrix diagnostic, an explicitly non-deployable oracle-neighbor-label ceiling, and a T2 recovery/breakage analysis directly comparable to Step 27's. Writes under `output/shape_classification/step28/` and [`docs/step_28_neighbor_context.md`](docs/step_28_neighbor_context.md).
+
+```bash
+python -m training.shape_classification.step28_experiments
+```
+
+See [`docs/step_28_neighbor_context.md`](docs/step_28_neighbor_context.md) — outcome `NEIGHBOR_CONTEXT_ADDS_SIGNAL`, decision gate `MOVE_TO_SEQUENCE_MODEL`: C1 clearly beats C0 (pooled macro F1 0.3668→0.3957, grouped mean 0.3500±0.0770→0.4151±0.0920), and for the first time in this arc Sloped-start improves (F1 0.112→0.162) *together with* Cosine (0.745→0.787, both precision and recall up) rather than at its expense — Fixed also improves, only Sloped-end dips slightly. T2 recovery/breakage is an order of magnitude healthier than Step 27's nonlinear-fusion result (48/295 recovered vs. 10/295; 498/3,597 broken vs. 1,023/3,597). Fold and recording consistency are real but imperfect (4/5 folds positive, one large amplifying outlier fold; 8/17 recordings gain substantially against 9/17 mild losses). An explicitly non-deployable oracle-neighbor-label ceiling reaches only ≈0.45 — real headroom above C1, but nowhere near the center trajectory's own oracle-pitch ceiling (≈0.82) — and previous-context consistently outweighs next-context for Sloped-start specifically. Recommended Step 29: a small sequence model (not a larger fixed concatenation) that can exploit that asymmetry.
 
 ---
 
