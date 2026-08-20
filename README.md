@@ -149,7 +149,7 @@ Clips shorter than one second are zero-padded; longer ones are truncated. Both t
 
 ---
 
-## Canonical / framewise pipeline (Steps 1–28)
+## Canonical / framewise pipeline (Steps 1–29)
 
 This is the active research track: build a continuous, lossless canonical representation of each transcription, then train framewise models on it. Step numbers here match `docs/step_N_*.md` exactly, so a doc's own title always agrees with the section that links it (`docs/step_4_5_canonical_trajectory_target.md` is linked from Steps 3 and 4, `docs/step_12_5_fusion_viterbi.md` from Step 12.5, and so on). The earlier, still-runnable CNN spectrogram-classification pipeline is described afterward, in its own unnumbered section.
 
@@ -670,6 +670,16 @@ python -m training.shape_classification.step28_experiments
 ```
 
 See [`docs/step_28_neighbor_context.md`](docs/step_28_neighbor_context.md) — outcome `NEIGHBOR_CONTEXT_ADDS_SIGNAL`, decision gate `MOVE_TO_SEQUENCE_MODEL`: C1 clearly beats C0 (pooled macro F1 0.3668→0.3957, grouped mean 0.3500±0.0770→0.4151±0.0920), and for the first time in this arc Sloped-start improves (F1 0.112→0.162) *together with* Cosine (0.745→0.787, both precision and recall up) rather than at its expense — Fixed also improves, only Sloped-end dips slightly. T2 recovery/breakage is an order of magnitude healthier than Step 27's nonlinear-fusion result (48/295 recovered vs. 10/295; 498/3,597 broken vs. 1,023/3,597). Fold and recording consistency are real but imperfect (4/5 folds positive, one large amplifying outlier fold; 8/17 recordings gain substantially against 9/17 mild losses). An explicitly non-deployable oracle-neighbor-label ceiling reaches only ≈0.45 — real headroom above C1, but nowhere near the center trajectory's own oracle-pitch ceiling (≈0.82) — and previous-context consistently outweighs next-context for Sloped-start specifically. Recommended Step 29: a small sequence model (not a larger fixed concatenation) that can exploit that asymmetry.
+
+### Step 29 — Can an order-aware trajectory sequence model use context better than linear neighbor features?
+
+Tests whether a BiGRU over the same ±1 trajectory embeddings Step 28 used (`[e_prev,e_center,e_next]`, sequence length 3, hidden=16/direction, output read at the center position only) extracts more than Step 28's linear concatenation (S1, reused unchanged) — with an explicit capacity-matched blind control (S2-center-only, same architecture and parameter count but both neighbor slots always forced absent) to separate "uses real context" from "just has more parameters." Not a framewise sequence model — the sequence elements are whole compressed trajectories, unrelated to Step 9's earlier framewise BiGRU. Includes a temporal-order swap diagnostic (no retraining) and a direct comparison to Step 28's oracle-neighbor-label ceiling. Writes under `output/shape_classification/step29/` and [`docs/step_29_trajectory_sequence_model.md`](docs/step_29_trajectory_sequence_model.md).
+
+```bash
+python -m training.shape_classification.step29_experiments
+```
+
+See [`docs/step_29_trajectory_sequence_model.md`](docs/step_29_trajectory_sequence_model.md) — outcome `SEQUENCE_MODEL_PARTIALLY_HELPS`, decision gate `FREEZE_LINEAR_CONTEXT_TYPER`: the sequence model demonstrably uses real neighbor content (S2-context clearly beats its own capacity-matched blind control, grouped mean 0.3444→0.4307, 4/5 folds), ruling out pure capacity as the explanation — but that does not translate into a clear advantage over Step 28's much simpler linear baseline (pooled macro F1 favors S1, 0.3957 vs. 0.3706; grouped mean favors S2 by a smaller margin; fold-level median delta ≈0). Sloped-start improves only marginally (F1 0.162→0.173) via precision up but recall *down* — not the clean both-improve pattern hoped for — while Cosine gives back some ground (F1 0.787→0.764). A temporal-order swap diagnostic confirms the model genuinely uses ordering (Sloped-start F1 drops from 0.173 to 0.102 when previous/next are swapped), so the mechanism isn't spurious — it just isn't a clear net win at nearly double S1's parameter count. Recommended Step 30: scope explicitly between testing whether a longer/differently-structured context window closes more of the gap to Step 28's oracle-neighbor ceiling (≈0.45), versus stepping back from oracle-boundary architecture work toward whether segmentation error dominates a real (non-oracle) pipeline regardless of which typer sits on top.
 
 ---
 
